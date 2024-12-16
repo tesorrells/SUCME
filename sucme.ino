@@ -47,7 +47,9 @@ char *orders[] = {"ENGAGE", "Observe", "Retreat", "Follow", "Mark", "Regroup", "
 String lastMenu[] = {defaultMenu[0], defaultMenu[1], defaultMenu[2], defaultMenu[3]};
 
 float latitude, longitude;
+float senderLatitude, senderLongitude;
 float headingDegrees;
+float bearingToSender;
 String lastBearing;
 String bearing;
 bool displayNeedsUpdate = true, newMsg = false;
@@ -112,7 +114,7 @@ void updateDisplay(String one, String two, String three, String four) {
         display.print("3. " + three);
         display.setCursor(0, 30);
         display.print("4. " + four);
-        display.setCursor(0, 56);
+        display.setCursor(0, 46);
         display.println(incomingMsg);
     }
  
@@ -125,6 +127,14 @@ void updateDisplayIfNeeded() {
         //Serial.println("Updating display...");
         updateDisplay(lastMenu[0], lastMenu[1], lastMenu[2], lastMenu[3]);
         displayNeedsUpdate = false; // Reset after updating
+    }
+}
+
+void clearIncomingMessageIfNeeded() {
+    // Check if 5 seconds have passed since the last message
+    if (!incomingMsg.isEmpty() && millis() - lastMsgTime > 5000) {
+        incomingMsg = "";  // Clear the message
+        markDisplayForUpdate();  // Trigger a display update
     }
 }
 
@@ -186,11 +196,54 @@ void setBearing(float angle) {
     }
 }
 
+float calculateBearing(float lat1, float lon1, float lat2, float lon2) {
+    lat1 = radians(lat1);
+    lon1 = radians(lon1);
+    lat2 = radians(lat2);
+    lon2 = radians(lon2);
+
+    float deltaLon = lon2 - lon1;
+    float y = sin(deltaLon) * cos(lat2);
+    float x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(deltaLon);
+    float bearing = atan2(y, x);
+    bearing = degrees(bearing);
+
+    // Normalize to 0-360 degrees
+    if (bearing < 0) {
+        bearing += 360;
+    }
+    return bearing;
+}
+
+float calculateRelativeHeading(float receiverHeading, float bearingToSender) {
+    float relativeHeading = bearingToSender - receiverHeading;
+
+    // Normalize to 0-360 degrees
+    if (relativeHeading < 0) {
+        relativeHeading += 360;
+    }
+    return relativeHeading;
+}
+
+float calculateDistance(float lat1, float lon1, float lat2, float lon2) {
+    const float R = 6371000.0; // Earth's radius in meters
+    float dLat = radians(lat2 - lat1);
+    float dLon = radians(lon2 - lon1);
+    lat1 = radians(lat1);
+    lat2 = radians(lat2);
+
+    float a = sin(dLat / 2) * sin(dLat / 2) +
+              cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+    float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return R * c;
+}
+
 String constructMessage() {
-    String lat = (latitude != 0) ? String(latitude) : "N/A";
-    String lon = (longitude != 0) ? String(longitude) : "N/A";
-    Serial.printf("%s %s from %.6f %.6f %s\n", contact.c_str(), distance.c_str(), latitude, longitude, order.c_str());
-    return String(currentCallsign) + ": " + contact + " " + distance + " " + order;
+    String lat = (latitude != 0) ? String(latitude, 10) : "0.000000";
+    String lon = (longitude != 0) ? String(longitude, 10) : "0.000000";
+    String msg = String(currentCallsign) + "," + String(contact) + "," + String((int)(distance.toFloat())) + "," + order + "," + lat + "," + lon;
+    Serial.println("Constructed Message: " + msg);
+    return msg;
 }
 
 void sendMessage() {
@@ -237,6 +290,14 @@ void updateGPS() {
     }
     //unsigned long duration = millis() - start;
     //Serial.printf("GPS update took %lu ms\n", duration);
+}
+
+void parseGPSFromMessage(String msg) {
+    int commaIndex = msg.indexOf(',');
+    if (commaIndex > 0) {
+        senderLatitude = msg.substring(0, commaIndex).toFloat();
+        senderLongitude = msg.substring(commaIndex + 1).toFloat();
+    }
 }
 
 void handleMenuNavigation(int buttonNumber) {
@@ -344,8 +405,36 @@ void checkButtons() {
 }
 
 void receivedCallback(uint32_t from, String &msg) {
-    Serial.println(msg.c_str());
-    incomingMsg = msg.c_str();
+    Serial.println("Message received: " + msg);
+
+    // Parse the message
+    int firstComma = msg.indexOf(',');
+    int secondComma = msg.indexOf(',', firstComma + 1);
+    int thirdComma = msg.indexOf(',', secondComma + 1);
+    int fourthComma = msg.indexOf(',', thirdComma + 1);
+    int fifthComma = msg.indexOf(',', fourthComma + 1);
+
+    if (firstComma == -1 || secondComma == -1 || thirdComma == -1 || fourthComma == -1 || fifthComma == -1) {
+        Serial.println("Invalid message format");
+        return;
+    }
+
+    String senderCallsign = msg.substring(0, firstComma);
+    String targetType = msg.substring(firstComma + 1, secondComma); // Extract target type
+    float distanceMeters = msg.substring(secondComma + 1, thirdComma).toFloat(); // Extract distance (meters)
+    String order = msg.substring(thirdComma + 1, fourthComma); // Extract order
+    float targetLat = msg.substring(fourthComma + 1, fifthComma).toFloat(); // Extract target latitude
+    float targetLon = msg.substring(fifthComma + 1).toFloat(); // Extract target longitude
+
+    // Calculate bearing and distance to the target
+    float bearingToTarget = calculateBearing(latitude, longitude, targetLat, targetLon);
+    float distanceToTarget = calculateDistance(latitude, longitude, targetLat, targetLon);
+
+    // Adjust for the receiver's current heading
+    float relativeHeading = calculateRelativeHeading(headingDegrees, bearingToTarget);
+
+    // Display the parsed information
+    incomingMsg = senderCallsign + ": " + targetType + " " + String(distanceToTarget, 0) + "m " + String(relativeHeading, 1) + "deg " + order;
     lastMsgTime = millis();
     markDisplayForUpdate();
 }
@@ -426,6 +515,7 @@ void loop() {
     checkButtons();
     //Serial.println("Updating display if needed...");
     updateDisplayIfNeeded();
+    clearIncomingMessageIfNeeded();
     //Serial.println("Updating mesh...");
     mesh.update();
     //Serial.println("Executing user scheduler...");
