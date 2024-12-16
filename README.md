@@ -2,6 +2,14 @@
 ## Small Unit Communications Mesh Extension
 Utilizing an ESP32, a GT-U7 GPS, and a HMC5883 compass along with the painlessMesh library this project aims to build a small and simple mesh communications network among small unit teams. 4 GPIO buttons allow users to navigate menus and send simple messages with pre built lists in the form of Object - Distance - Order. This is meant to bridge the gap of small units unable to communicate through hand signals or radios in environments where coming off of their system is ill advised. 
 
+### Requirements
+painlessMesh
+TinyGPS++
+Adafruit_SSD1306
+Adafruit_GFX
+Adafruit_HMC5883_U
+Adafruit_Sensor
+
 ### Contacts
 "Inf", "Vec", "Obj", "FS", "LP/OP", "Comm", "FOB", "Friend", "Unkn"
 
